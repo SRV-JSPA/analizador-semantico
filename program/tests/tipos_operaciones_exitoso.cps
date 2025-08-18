@@ -25,3 +25,5 @@ let resultado_and: boolean = condicion1 && condicion2;
 // Test 1.6: Operaciones unarias
 let negativo: integer = -x;
 let negacion: boolean = !condicion1;
+
+

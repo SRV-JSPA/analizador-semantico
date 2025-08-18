@@ -29,7 +29,6 @@ class TypeChecker:
             return "error"
     
     def _check_arithmetic_operation(self, left_type: str, operator: str, right_type: str) -> str:
-
         if left_type == "boolean" or right_type == "boolean":
             return "error"
 
@@ -41,18 +40,28 @@ class TypeChecker:
         if operator in {"*", "/", "%"}:
             if left_type == "integer" and right_type == "integer":
                 return "integer"
-
             return "error"
 
         if operator in {"+", "-"}:
             if operator == "+":
+                # Concatenación de strings
                 if left_type == "string" and right_type == "string":
                     return "string"
+                
+                # NUEVA FUNCIONALIDAD: Conversión automática integer -> string en concatenación
+                if left_type == "string" and right_type == "integer":
+                    return "string"  # integer se convierte automáticamente a string
+                
+                if left_type == "integer" and right_type == "string":
+                    return "string"  # integer se convierte automáticamente a string
+                
+                # Operaciones numéricas
                 if left_type in numeric_types and right_type in numeric_types:
                     if left_type == "integer" and right_type == "integer":
                         return "integer"
                 return "error"
-            else:  
+            else:  # operator == "-"
+                # La resta solo funciona con números
                 if left_type in numeric_types and right_type in numeric_types:
                     if left_type == "integer" and right_type == "integer":
                         return "integer"

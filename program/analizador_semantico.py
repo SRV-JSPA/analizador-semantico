@@ -1163,19 +1163,27 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
     
     def visitUnaryExpr(self, ctx: CompiscriptParser.UnaryExprContext):
         
-        
         text = ctx.getText()
+        
         if text.startswith('-') or text.startswith('!'):
-            operand_type = self.safe_visit(ctx.primaryExpr())
+            
             operator = text[0]
+            
+            
+            operand_type = self.safe_visit(ctx.unaryExpr())
+            
+            
+            if operand_type is None:
+                operand_type = "error"
             
             result_type = self.analyzer.type_checker.check_unary_operation(operator, operand_type)
             if result_type == "error":
                 self.analyzer.add_error(
                     ctx.start.line, ctx.start.column,
-                    f"Operación unaria inválida: '{operator}'{operand_type}'"
+                    f"Operación unaria inválida: '{operator}' sobre '{operand_type}'"
                 )
             return result_type
+        
         
         return self.safe_visit(ctx.primaryExpr())
     
