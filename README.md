@@ -21,7 +21,7 @@ El compilador revisa que los programas no solo estén bien escritos de forma sin
 - Validación de funciones: parámetros, retornos, llamadas y recursión  
 - Control de flujo: condiciones booleanas, uso correcto de break, continue y return  
 - Clases y objetos: atributos, métodos, constructores y uso de this  
-- Advertencias para variables no utilizadas  
+ 
 
 ## Uso
 1. Colocar un archivo fuente en Compiscript, por ejemplo `archivo.cps`  
