@@ -27,3 +27,4 @@ let negativo: integer = -x;
 let negacion: boolean = !condicion1;
 
 
+

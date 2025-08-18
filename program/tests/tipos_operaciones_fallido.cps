@@ -26,3 +26,4 @@ let neg: integer = -cadena;  // ERROR: no se puede negar una string
 let a: boolean = true;
 let b: integer = 5;
 let mod: integer = a % b;  // ERROR: % requiere operandos numéricos
+
