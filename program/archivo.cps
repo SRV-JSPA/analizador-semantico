@@ -25,7 +25,7 @@ function max2(x: integer, y: integer): integer {
     return y;
 }
 
-let r1: integer = cuadrado(a);
+let r1: integer = "hola";
 
 while (i > 0) {
     i = i - 1;

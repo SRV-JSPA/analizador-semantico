@@ -75,6 +75,12 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         total_errors = self.analyzer.get_total_errors()
         total_warnings = len(self.analyzer.symbol_table.get_warnings())
         
+        errors = self.analyzer.symbol_table.get_errors()
+        if errors:
+            print("\nErrores semanticos")
+            for i, error in enumerate(errors, 1):
+                print(f"{i}. {error}")
+        
         print(f"Errores: {total_errors}, Warnings: {total_warnings}")
         return None
     
