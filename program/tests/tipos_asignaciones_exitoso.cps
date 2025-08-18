@@ -25,3 +25,4 @@ let x: integer = 5;
 {
     let x: string = "local";  // Válido en ámbito diferente
 }
+

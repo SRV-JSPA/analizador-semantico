@@ -15,3 +15,4 @@ let resultado: integer = noExiste + 5;  // ERROR: variable no declarada
 const FIJO: integer = 100;
 FIJO = 200;  // ERROR: no se puede reasignar constante
 
+

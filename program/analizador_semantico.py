@@ -30,7 +30,11 @@ class SemanticAnalyzer:
         self.loop_depth = 0
         self.return_found = False
 
-        self.function_ctx_stack: List[tuple] = [] 
+        self.function_ctx_stack: List[tuple] = []
+        
+        
+        self.unreachable_code = False  
+        self.unreachable_stack: List[bool] = []  
         
         self._initialize_builtin_functions()
         
@@ -59,6 +63,38 @@ class SemanticAnalyzer:
 class CompiscriptSemanticVisitor(CompiscriptVisitor):
     def __init__(self):
         self.analyzer = SemanticAnalyzer()
+        
+    def check_dead_code(self, ctx, statement_type="declaración"):
+        """Verifica si el código actual es inalcanzable y reporta error si es así"""
+        if self.analyzer.unreachable_code:
+            self.analyzer.add_error(
+                ctx.start.line, ctx.start.column,
+                f"Código muerto detectado: {statement_type} después de una declaración de control de flujo",
+                "DEAD_CODE"
+            )
+            return True
+        return False   
+    
+    
+    def mark_unreachable(self):
+        """Marca el código siguiente como inalcanzable"""
+        self.analyzer.unreachable_code = True
+    
+    def push_reachability_state(self):
+        """Guarda el estado actual de alcanzabilidad al entrar a un nuevo scope"""
+        self.analyzer.unreachable_stack.append(self.analyzer.unreachable_code)
+    
+    def pop_reachability_state(self):
+        """Restaura el estado de alcanzabilidad al salir de un scope"""
+        if self.analyzer.unreachable_stack:
+            self.analyzer.unreachable_code = self.analyzer.unreachable_stack.pop()
+        else:
+            self.analyzer.unreachable_code = False
+    
+    def reset_reachability_in_scope(self):
+        """Resetea la alcanzabilidad dentro del scope actual (para nuevos bloques)"""
+        self.analyzer.unreachable_code = False
+
     
     
     def visitProgram(self, ctx: CompiscriptParser.ProgramContext):
@@ -91,32 +127,31 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         return self.visitChildren(ctx)
     
     def visitBlock(self, ctx: CompiscriptParser.BlockContext):
-        
-        
         self.analyzer.symbol_table.enter_scope("block", ContextType.GLOBAL)
+        
+        
+        self.push_reachability_state()
         
         if ctx.statement():
             for stmt in ctx.statement():
                 self.safe_visit(stmt)
         
         
+        self.pop_reachability_state()
         self.analyzer.symbol_table.exit_scope()
         return None
     
     
     
     def visitFunctionDeclaration(self, ctx: CompiscriptParser.FunctionDeclarationContext):
-        
         func_name = ctx.Identifier().getText()
         line = ctx.start.line
         column = ctx.start.column
-
 
         
         array_element_type = None
         if ctx.type_():
             return_type_str = self.safe_visit(ctx.type_())
-            
             
             if return_type_str and return_type_str.endswith("[]"):
                 base_type = return_type_str[:-2]  
@@ -138,24 +173,44 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
 
         
         parameters = []
+        param_array_info = {}  
+        
         if ctx.parameters():
             for param in ctx.parameters().parameter():
                 param_name = param.Identifier().getText()
+                param_array_element_type = None
+                
                 if param.type_():
                     param_type_str = self.safe_visit(param.type_())
-                    try:
-                        param_type = DataType(param_type_str)
-                    except ValueError:
-                        self.analyzer.add_error(param.start.line, param.start.column,
-                                                f"Tipo de parámetro inválido: '{param_type_str}'")
-                        param_type = DataType.INTEGER
+                    
+                    
+                    if param_type_str and param_type_str.endswith("[]"):
+                        base_type = param_type_str[:-2]
+                        try:
+                            param_array_element_type = DataType(base_type)
+                            param_type = DataType.ARRAY
+                            
+                            param_array_info[param_name] = param_array_element_type
+                        except ValueError:
+                            self.analyzer.add_error(param.start.line, param.start.column,
+                                                    f"Tipo de elemento de array inválido en parámetro: '{base_type}'")
+                            param_type = DataType.INTEGER
+                    else:
+                        try:
+                            param_type = DataType(param_type_str)
+                        except ValueError:
+                            self.analyzer.add_error(param.start.line, param.start.column,
+                                                    f"Tipo de parámetro inválido: '{param_type_str}'")
+                            param_type = DataType.INTEGER
                 else:
                     param_type = DataType.INTEGER
+                
                 parameters.append((param_name, param_type))
 
         
         success = self.analyzer.symbol_table.declare_function(
-    func_name, return_type, parameters, line, column, array_element_type)
+            func_name, return_type, parameters, line, column, array_element_type)
+        
         if not success:
             return None
 
@@ -163,15 +218,20 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         prev_context = (self.analyzer.current_function, self.analyzer.return_found)
         self.analyzer.function_ctx_stack.append(prev_context)
 
-        
         self.analyzer.symbol_table.enter_scope(func_name, ContextType.FUNCTION)
         self.analyzer.current_function = func_name
-        self.analyzer.return_found = False  
+        self.analyzer.return_found = False
+        
+        self.push_reachability_state()
+        self.reset_reachability_in_scope()
 
         
         for param_name, param_type in parameters:
+            
+            param_array_element_type = param_array_info.get(param_name, None)
+            
             self.analyzer.symbol_table.declare_variable(
-                param_name, param_type, line, column, False, None
+                param_name, param_type, line, column, False, None, param_array_element_type
             )
 
         
@@ -187,6 +247,9 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                 "MISSING_RETURN"
             )
 
+        self.analyzer.symbol_table.exit_scope()
+        
+        self.pop_reachability_state()
         
         self.analyzer.symbol_table.exit_scope()
 
@@ -214,12 +277,15 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
     
     def visitVariableDeclaration(self, ctx: CompiscriptParser.VariableDeclarationContext):
         
+        if self.check_dead_code(ctx, "declaración de variable"):
+            return None
+            
+        
         var_name = ctx.Identifier().getText()
         line = ctx.start.line
         column = ctx.start.column
         
         array_element_type = None
-        
         
         declared_type = None
         if ctx.typeAnnotation():
@@ -233,11 +299,9 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                     self.analyzer.add_error(line, column, f"Tipo de elemento de array inválido: '{base_type}'")
                     return None
         
-        
         init_type = None
         if ctx.initializer():
             init_type = self.safe_visit(ctx.initializer())
-        
         
         if not declared_type and init_type:
             declared_type = init_type
@@ -249,7 +313,6 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
             )
             return None
         
-        
         if declared_type and init_type:
             if not self.analyzer.type_checker.is_compatible(declared_type, init_type):
                 self.analyzer.add_error(
@@ -259,20 +322,14 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                 )
                 return None
         
-        
         if declared_type and self.is_class_type(declared_type):
-            
             data_type_enum = DataType.CLASS_TYPE
-            
             success = self.analyzer.symbol_table.declare_class_instance(
                 var_name, declared_type, line, column
             )
-            
             if not success:
                 return None
-            
             return declared_type
-        
         
         try:
             data_type_enum = DataType(declared_type)
@@ -283,7 +340,6 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                 "INVALID_TYPE"
             )
             return None
-        
         
         success = self.analyzer.symbol_table.declare_variable(
             var_name, data_type_enum, line, column, False, None, array_element_type)  
@@ -303,6 +359,8 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
     
     
     def visitConstantDeclaration(self, ctx: CompiscriptParser.ConstantDeclarationContext):
+        if self.check_dead_code(ctx, "declaración de constante"):
+            return None
         const_name = ctx.Identifier().getText()
         line = ctx.start.line
         column = ctx.start.column
@@ -372,10 +430,7 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
     
     
     def visitIfStatement(self, ctx: CompiscriptParser.IfStatementContext):
-        
         line = ctx.start.line
-        
-        
         
         if ctx.expression():
             condition_type = self.safe_visit(ctx.expression())
@@ -383,35 +438,55 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                 self.analyzer.add_error(line, 0, 
                     f"Condición del if debe ser boolean, encontrado: '{condition_type}'")
         
-        
         blocks = ctx.block()
         if blocks:
             
             if len(blocks) > 0:
+                
+                current_unreachable = self.analyzer.unreachable_code
+                self.push_reachability_state()
                 self.safe_visit(blocks[0])
-            
-            if len(blocks) > 1:
-                self.safe_visit(blocks[1])
+                then_unreachable = self.analyzer.unreachable_code
+                self.pop_reachability_state()
+                
+                
+                if len(blocks) > 1:
+                    self.analyzer.unreachable_code = current_unreachable
+                    self.push_reachability_state()
+                    self.safe_visit(blocks[1])
+                    else_unreachable = self.analyzer.unreachable_code
+                    self.pop_reachability_state()
+                    
+                    
+                    if then_unreachable and else_unreachable:
+                        self.analyzer.unreachable_code = True
+                    else:
+                        self.analyzer.unreachable_code = current_unreachable
+                else:
+                    
+                    self.analyzer.unreachable_code = current_unreachable
         
         return None
     
     def visitWhileStatement(self, ctx: CompiscriptParser.WhileStatementContext):
-        
         line = ctx.start.line        
         
         self.analyzer.symbol_table.enter_scope("while", ContextType.LOOP)
         self.analyzer.loop_depth += 1
         
+        
+        self.push_reachability_state()
+        
         try:
-            
             if ctx.expression():
                 condition_type = self.safe_visit(ctx.expression())
                 if condition_type and condition_type != "boolean":
                     self.analyzer.add_error(line, 0, 
                         f"Condición del while debe ser boolean, encontrado: '{condition_type}'")
             
-            
             if ctx.block():
+                
+                self.reset_reachability_in_scope()
                 
                 if ctx.block().statement():
                     for stmt in ctx.block().statement():
@@ -419,21 +494,27 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         
         finally:
             
+            self.pop_reachability_state()
             self.analyzer.loop_depth -= 1
             self.analyzer.symbol_table.exit_scope()
         
         return None
     
     def visitDoWhileStatement(self, ctx: CompiscriptParser.DoWhileStatementContext):
-        
         line = ctx.start.line
         
         self.analyzer.symbol_table.enter_scope("do-while", ContextType.LOOP)
         self.analyzer.loop_depth += 1
         
+        
+        self.push_reachability_state()
+        
         try:
             
             if ctx.block():
+                
+                self.reset_reachability_in_scope()
+                
                 if ctx.block().statement():
                     for stmt in ctx.block().statement():
                         self.safe_visit(stmt)
@@ -447,18 +528,20 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         
         finally:
             
+            self.pop_reachability_state()
             self.analyzer.loop_depth -= 1
             self.analyzer.symbol_table.exit_scope()
         
         return None
     
     def visitForStatement(self, ctx: CompiscriptParser.ForStatementContext):
-        
         line = ctx.start.line
         
-    
         self.analyzer.symbol_table.enter_scope("for", ContextType.LOOP)
         self.analyzer.loop_depth += 1
+        
+        
+        self.push_reachability_state()
         
         try:
             
@@ -481,39 +564,41 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
             
             
             if ctx.block():
+                
+                self.reset_reachability_in_scope()
+                
                 if ctx.block().statement():
                     for stmt in ctx.block().statement():
                         self.safe_visit(stmt)
         
         finally:
             
+            self.pop_reachability_state()
             self.analyzer.loop_depth -= 1
             self.analyzer.symbol_table.exit_scope()
         
         return None
     
+    
     def visitForeachStatement(self, ctx: CompiscriptParser.ForeachStatementContext):
-        
         line = ctx.start.line
         column = ctx.start.column
-        
-        
         
         self.analyzer.symbol_table.enter_scope("foreach", ContextType.LOOP)
         self.analyzer.loop_depth += 1
         
+        
+        self.push_reachability_state()
+        
         try:
-            
             iter_var = ctx.Identifier().getText()
             
             
             iterable_type_str = self.safe_visit(ctx.expression())
             
-            
             if iterable_type_str == "array":
                 element_type = DataType.INTEGER
             elif iterable_type_str and iterable_type_str.endswith("[]"):
-                
                 base_type = iterable_type_str[:-2]
                 try:
                     element_type = DataType(base_type)
@@ -530,123 +615,180 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                 iter_var, element_type, line, column, False, "auto_generated"
             )            
             
+            
             if ctx.block():
+                
+                self.reset_reachability_in_scope()
+                
                 if ctx.block().statement():
                     for stmt in ctx.block().statement():
                         self.safe_visit(stmt)
         
         finally:
             
+            self.pop_reachability_state()
             self.analyzer.loop_depth -= 1
             self.analyzer.symbol_table.exit_scope()
         
         return None
     
     def visitTryCatchStatement(self, ctx: CompiscriptParser.TryCatchStatementContext):
-        
         line = ctx.start.line
         column = ctx.start.column
-        
         
         blocks = ctx.block()
         
         
         if blocks and len(blocks) > 0:
+            
+            current_unreachable = self.analyzer.unreachable_code
+            self.push_reachability_state()
             self.safe_visit(blocks[0])
+            try_unreachable = self.analyzer.unreachable_code
+            self.pop_reachability_state()
         
         
         self.analyzer.symbol_table.enter_scope("catch", ContextType.GLOBAL)
         
         try:
-            
             error_var = ctx.Identifier().getText()
             self.analyzer.symbol_table.declare_variable(
                 error_var, DataType.STRING, line, column, False, "exception"
             )
             
-            
             if blocks and len(blocks) > 1:
+                
+                self.analyzer.unreachable_code = current_unreachable
+                self.push_reachability_state()
+                
                 if blocks[1].statement():
                     for stmt in blocks[1].statement():
                         self.safe_visit(stmt)
+                
+                catch_unreachable = self.analyzer.unreachable_code
+                self.pop_reachability_state()
+                
+                
+                
+                self.analyzer.unreachable_code = current_unreachable
         
         finally:
-            
             self.analyzer.symbol_table.exit_scope()
         
         return None
     
     def visitSwitchStatement(self, ctx: CompiscriptParser.SwitchStatementContext):
-        
         line = ctx.start.line
         
+        
+        if self.check_dead_code(ctx, "switch"):
+            return None
         
         
         if ctx.expression():
             switch_type = self.safe_visit(ctx.expression())
         
         
+        current_unreachable = self.analyzer.unreachable_code
+        has_default = ctx.defaultCase() is not None
+        all_cases_unreachable = True
+        
+        
         if ctx.switchCase():
             for case in ctx.switchCase():
+                
+                self.analyzer.unreachable_code = current_unreachable
+                self.push_reachability_state()
                 self.safe_visit(case)
+                case_unreachable = self.analyzer.unreachable_code
+                self.pop_reachability_state()
+                
+                
+                if not case_unreachable:
+                    all_cases_unreachable = False
         
         
         if ctx.defaultCase():
+            self.analyzer.unreachable_code = current_unreachable
+            self.push_reachability_state()
             self.safe_visit(ctx.defaultCase())
+            default_unreachable = self.analyzer.unreachable_code
+            self.pop_reachability_state()
+            
+            if not default_unreachable:
+                all_cases_unreachable = False
+        
+        
+        
+        
+        
+        if all_cases_unreachable and has_default:
+            self.analyzer.unreachable_code = True
+        else:
+            self.analyzer.unreachable_code = current_unreachable
         
         return None
     
     def visitSwitchCase(self, ctx: CompiscriptParser.SwitchCaseContext):
-        
-        
         self.analyzer.symbol_table.enter_scope("case", ContextType.GLOBAL)
         
-        if ctx.expression():
-            self.safe_visit(ctx.expression())
+        try:
+            
+            if ctx.expression():
+                self.safe_visit(ctx.expression())
+            
+            
+            if ctx.statement():
+                for stmt in ctx.statement():
+                    self.safe_visit(stmt)
         
-        if ctx.statement():
-            for stmt in ctx.statement():
-                self.safe_visit(stmt)
+        finally:
+            self.analyzer.symbol_table.exit_scope()
         
-        
-        self.analyzer.symbol_table.exit_scope()
         return None
     
     def visitDefaultCase(self, ctx: CompiscriptParser.DefaultCaseContext):
-        
-        
         self.analyzer.symbol_table.enter_scope("default", ContextType.GLOBAL)
         
-        if ctx.statement():
-            for stmt in ctx.statement():
-                self.safe_visit(stmt)
+        try:
+            
+            if ctx.statement():
+                for stmt in ctx.statement():
+                    self.safe_visit(stmt)
         
+        finally:
+            self.analyzer.symbol_table.exit_scope()
         
-        self.analyzer.symbol_table.exit_scope()
         return None
     
     
     
     def visitBreakStatement(self, ctx: CompiscriptParser.BreakStatementContext):
-        
         line = ctx.start.line
         column = ctx.start.column
+        
+        
+        self.check_dead_code(ctx, "break")
         
         if self.analyzer.loop_depth == 0:
             self.analyzer.add_error(line, column, 
                 "'break' solo puede usarse dentro de bucles")
         
+        self.mark_unreachable()  
         return None
     
     def visitContinueStatement(self, ctx: CompiscriptParser.ContinueStatementContext):
-        
         line = ctx.start.line
         column = ctx.start.column
+        
+        
+        self.check_dead_code(ctx, "continue")
         
         if self.analyzer.loop_depth == 0:
             self.analyzer.add_error(line, column, 
                 "'continue' solo puede usarse dentro de bucles")
         
+        self.mark_unreachable()  
         return None
     
     
@@ -709,15 +851,16 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
             return function_symbol.return_type.value
     
     def visitReturnStatement(self, ctx: CompiscriptParser.ReturnStatementContext):
-        
         line = ctx.start.line
         column = ctx.start.column
+        
+        
+        self.check_dead_code(ctx, "return")
         
         if not self.analyzer.current_function:
             self.analyzer.add_error(line, column, "'return' solo puede usarse dentro de funciones")
             return None
 
-        
         function_symbol = self.analyzer.symbol_table.lookup(self.analyzer.current_function)
         if not function_symbol:
             self.analyzer.add_error(line, column, 
@@ -727,17 +870,15 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         expected_return_type = function_symbol.return_type
         expected_element_type = function_symbol.array_element_type
 
-        
         if ctx.expression():
             actual_return_type_str = self.safe_visit(ctx.expression())
             
             if actual_return_type_str == "error":
+                self.mark_unreachable()  
                 return None
             
             if expected_return_type == DataType.ARRAY and expected_element_type:
                 expected_full_type = f"{expected_element_type.value}[]"
-                
-                
                 
                 if actual_return_type_str != expected_full_type:
                     self.analyzer.add_error(line, column, 
@@ -745,11 +886,10 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                         f"esperado '{expected_full_type}', encontrado '{actual_return_type_str}'",
                         "TYPE_MISMATCH")
                     self.analyzer.return_found = True
+                    self.mark_unreachable()  
                     return None
 
-            
             elif not self.analyzer.type_checker.is_compatible(expected_return_type.value, actual_return_type_str):
-                
                 if expected_return_type == DataType.ARRAY and expected_element_type:
                     expected_display = f"{expected_element_type.value}[]"
                 else:
@@ -760,27 +900,27 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                     f"esperado '{expected_display}', encontrado '{actual_return_type_str}'",
                     "TYPE_MISMATCH")
                 self.analyzer.return_found = True
+                self.mark_unreachable()  
                 return None
-            
 
         self.analyzer.return_found = True
+        self.mark_unreachable()  
         return None
     
     
     def visitClassDeclaration(self, ctx: CompiscriptParser.ClassDeclarationContext):
+        
+        
+        
         try:
-            
             class_name = ctx.Identifier(0).getText()  
             parent_class = None
-            
             
             if len(ctx.Identifier()) > 1:
                 parent_class = ctx.Identifier(1).getText()
             
             line = ctx.start.line
             column = ctx.start.column
-            
-            
             
             if parent_class:
                 parent_symbol = self.analyzer.symbol_table.lookup(parent_class)
@@ -789,7 +929,6 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                         f"Clase padre '{parent_class}' no existe o no es una clase")
                     return None
             
-            
             success = self.analyzer.symbol_table.declare_class(
                 class_name, parent_class, line, column
             )
@@ -797,39 +936,33 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
             if not success:
                 return None
             
-            
             self.analyzer.symbol_table.enter_scope(class_name, ContextType.CLASS)
             self.analyzer.current_class = class_name
             
+            
+            self.push_reachability_state()
+            self.reset_reachability_in_scope()
             
             self.analyzer.symbol_table.declare_variable(
                 "this", DataType.CLASS_TYPE, line, column, True, class_name
             )
             
-            
             class_symbol = self.analyzer.symbol_table.lookup(class_name)
-            
             
             if ctx.classMember():
                 for member in ctx.classMember():
-                    
                     if member.functionDeclaration():
-                        
                         self.safe_visit(member.functionDeclaration())
-                        
                         
                         method_ctx = member.functionDeclaration()
                         method_name = method_ctx.Identifier().getText()
-                        
                         
                         method_symbol = self.analyzer.symbol_table.lookup_current_scope(method_name)
                         if method_symbol:
                             class_symbol.methods[method_name] = method_symbol
                     
                     elif member.variableDeclaration() or member.constantDeclaration():
-                        
                         self.safe_visit(member)
-                        
                         
                         if member.variableDeclaration():
                             attr_name = member.variableDeclaration().Identifier().getText()
@@ -841,9 +974,10 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                             class_symbol.attributes[attr_name] = attr_symbol
             
             
+            self.pop_reachability_state()
+            
             self.analyzer.symbol_table.exit_scope()
             self.analyzer.current_class = None
-            
             
         except Exception as e:
             self.analyzer.add_error(ctx.start.line, ctx.start.column, 
@@ -857,9 +991,12 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
     
     
     def visitAssignment(self, ctx: CompiscriptParser.AssignmentContext):
-        
         line = ctx.start.line
         column = ctx.start.column
+        
+        
+        if self.check_dead_code(ctx, "asignación"):
+            return None
         
         try:
             expressions = ctx.expression()
@@ -869,19 +1006,16 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
             if identifier_node is not None and len(expressions) == 1:
                 var_name = identifier_node.getText()
                 
-                
                 symbol = self.analyzer.symbol_table.lookup(var_name)
                 if not symbol:
                     self.analyzer.add_error(line, column, 
                         f"Variable '{var_name}' no está declarada")
                     return None
                 
-                
                 if symbol.symbol_type == SymbolType.CONSTANT:
                     self.analyzer.add_error(line, column, 
                         f"No se puede reasignar la constante '{var_name}'")
                     return None
-                
                 
                 expected_type = symbol.data_type.value
                 if symbol.data_type == DataType.CLASS_TYPE:
@@ -889,48 +1023,32 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                 elif symbol.data_type == DataType.ARRAY and symbol.array_element_type:
                     expected_type = f"{symbol.array_element_type.value}[]"
                 
-                
                 expr_type = self.safe_visit(expressions[0])
                 if expr_type and not self.analyzer.type_checker.is_compatible(expected_type, expr_type):
                     self.analyzer.add_error(line, column, 
                         f"Tipo incompatible: no se puede asignar '{expr_type}' a '{expected_type}'")
             
-            
             elif identifier_node is not None and len(expressions) == 2:
-                
-                
-                
-                
                 property_name = identifier_node.getText()
-                
-                
                 obj_type = self.safe_visit(expressions[0])
-                
-                
                 value_type = self.safe_visit(expressions[1])
                                 
-                
                 if self.is_class_type(obj_type):
                     class_symbol = self.analyzer.symbol_table.lookup(obj_type)
                     if class_symbol and class_symbol.symbol_type == SymbolType.CLASS:
-                        
-                        
                         if property_name in class_symbol.attributes:
                             attr_symbol = class_symbol.attributes[property_name]
-                            
                             
                             if attr_symbol.symbol_type == SymbolType.CONSTANT:
                                 self.analyzer.add_error(line, column,
                                     f"No se puede reasignar la constante '{property_name}'")
                                 return None
                             
-                            
                             expected_type = attr_symbol.data_type.value
                             if attr_symbol.data_type == DataType.CLASS_TYPE:
                                 expected_type = attr_symbol.class_type or attr_symbol.value
                             elif attr_symbol.data_type == DataType.ARRAY and attr_symbol.array_element_type:
                                 expected_type = f"{attr_symbol.array_element_type.value}[]"
-                            
                             
                             if not self.analyzer.type_checker.is_compatible(expected_type, value_type):
                                 self.analyzer.add_error(line, column,
@@ -959,11 +1077,19 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         return None
     
     def visitExpressionStatement(self, ctx: CompiscriptParser.ExpressionStatementContext):
+        
+        if self.check_dead_code(ctx, "expresión"):
+            return None
+            
         if ctx.expression():
             return self.safe_visit(ctx.expression())
         return None
     
     def visitPrintStatement(self, ctx: CompiscriptParser.PrintStatementContext):
+        
+        if self.check_dead_code(ctx, "print"):
+            return None
+            
         if ctx.expression():
             return self.safe_visit(ctx.expression())
         return None

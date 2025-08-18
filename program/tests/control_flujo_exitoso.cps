@@ -48,3 +48,4 @@ let numeros: integer[] = [1, 2, 3];
 foreach (numero in numeros) {
     print("numero");
 }
+
