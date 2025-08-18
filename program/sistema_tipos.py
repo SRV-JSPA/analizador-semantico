@@ -44,24 +44,24 @@ class TypeChecker:
 
         if operator in {"+", "-"}:
             if operator == "+":
-                # Concatenación de strings
+                
                 if left_type == "string" and right_type == "string":
                     return "string"
                 
-                # NUEVA FUNCIONALIDAD: Conversión automática integer -> string en concatenación
+                
                 if left_type == "string" and right_type == "integer":
-                    return "string"  # integer se convierte automáticamente a string
+                    return "string"  
                 
                 if left_type == "integer" and right_type == "string":
-                    return "string"  # integer se convierte automáticamente a string
+                    return "string"  
                 
-                # Operaciones numéricas
+                
                 if left_type in numeric_types and right_type in numeric_types:
                     if left_type == "integer" and right_type == "integer":
                         return "integer"
                 return "error"
-            else:  # operator == "-"
-                # La resta solo funciona con números
+            else:  
+                
                 if left_type in numeric_types and right_type in numeric_types:
                     if left_type == "integer" and right_type == "integer":
                         return "integer"
