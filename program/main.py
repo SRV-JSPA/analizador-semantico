@@ -5,6 +5,24 @@ from CompiscriptLexer import CompiscriptLexer
 from CompiscriptParser import CompiscriptParser
 from analizador_semantico import CompiscriptSemanticVisitor
 
+def print_ast(node, depth=0):
+    if node is None:
+        return
+    
+    indent = "  " * depth
+    class_name = node.__class__.__name__
+    
+    if hasattr(node, 'getText') and node.getChildCount() == 0:
+        print(f"{indent}{class_name}: {node.getText()}")
+    else:
+        print(f"{indent}{class_name}")
+    
+    if hasattr(node, 'getChildCount'):
+        for i in range(node.getChildCount()):
+            child = node.getChild(i)
+            print_ast(child, depth + 1)
+
+
 def main():    
     if len(sys.argv) > 1:
         file_path = sys.argv[1]
@@ -31,6 +49,7 @@ def main():
         parser.removeErrorListeners()
         
         ast = parser.program()
+        print_ast(ast, 0)
         
         if parser.getNumberOfSyntaxErrors() > 0:
             print(f"Se encontraron {parser.getNumberOfSyntaxErrors()} errores sintácticos")

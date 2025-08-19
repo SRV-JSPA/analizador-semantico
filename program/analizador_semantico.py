@@ -31,7 +31,9 @@ class SemanticAnalyzer:
         self.return_found = False
 
         self.function_ctx_stack: List[tuple] = []
-        
+
+        self.loop_depth = 0
+        self.switch_depth = 0 
         
         self.unreachable_code = False  
         self.unreachable_stack: List[bool] = []  
@@ -89,12 +91,8 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
     
     def reset_reachability_in_scope(self):
         self.analyzer.unreachable_code = False
-
-    
     
     def visitProgram(self, ctx: CompiscriptParser.ProgramContext):
-        
-        
         self.analyzer.symbol_table.enter_scope("global", ContextType.GLOBAL)
         
         if ctx.statement():
@@ -469,7 +467,6 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         self.analyzer.symbol_table.enter_scope("while", ContextType.LOOP)
         self.analyzer.loop_depth += 1
         
-        
         self.push_reachability_state()
         
         try:
@@ -480,15 +477,10 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                         f"Condición del while debe ser boolean, encontrado: '{condition_type}'")
             
             if ctx.block():
-                
                 self.reset_reachability_in_scope()
-                
-                if ctx.block().statement():
-                    for stmt in ctx.block().statement():
-                        self.safe_visit(stmt)
+                self.safe_visit(ctx.block())  
         
         finally:
-            
             self.pop_reachability_state()
             self.analyzer.loop_depth -= 1
             self.analyzer.symbol_table.exit_scope()
@@ -501,19 +493,12 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         self.analyzer.symbol_table.enter_scope("do-while", ContextType.LOOP)
         self.analyzer.loop_depth += 1
         
-        
         self.push_reachability_state()
         
         try:
-            
             if ctx.block():
-                
                 self.reset_reachability_in_scope()
-                
-                if ctx.block().statement():
-                    for stmt in ctx.block().statement():
-                        self.safe_visit(stmt)
-            
+                self.safe_visit(ctx.block()) 
             
             if ctx.expression():
                 condition_type = self.safe_visit(ctx.expression())
@@ -522,7 +507,6 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                         f"Condición del do-while debe ser boolean, encontrado: '{condition_type}'")
         
         finally:
-            
             self.pop_reachability_state()
             self.analyzer.loop_depth -= 1
             self.analyzer.symbol_table.exit_scope()
@@ -535,16 +519,13 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         self.analyzer.symbol_table.enter_scope("for", ContextType.LOOP)
         self.analyzer.loop_depth += 1
         
-        
         self.push_reachability_state()
         
         try:
-            
             if ctx.variableDeclaration():
                 self.safe_visit(ctx.variableDeclaration())
             elif ctx.assignment():
                 self.safe_visit(ctx.assignment())
-            
             
             expressions = ctx.expression()
             if expressions and len(expressions) >= 1:
@@ -553,21 +534,14 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                     self.analyzer.add_error(line, 0, 
                         f"Condición del for debe ser boolean, encontrado: '{cond_type}'")
             
-            
             if expressions and len(expressions) >= 2:
                 self.safe_visit(expressions[1])
             
-            
             if ctx.block():
-                
                 self.reset_reachability_in_scope()
-                
-                if ctx.block().statement():
-                    for stmt in ctx.block().statement():
-                        self.safe_visit(stmt)
+                self.safe_visit(ctx.block())  
         
         finally:
-            
             self.pop_reachability_state()
             self.analyzer.loop_depth -= 1
             self.analyzer.symbol_table.exit_scope()
@@ -582,12 +556,10 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         self.analyzer.symbol_table.enter_scope("foreach", ContextType.LOOP)
         self.analyzer.loop_depth += 1
         
-        
         self.push_reachability_state()
         
         try:
             iter_var = ctx.Identifier().getText()
-            
             
             iterable_type_str = self.safe_visit(ctx.expression())
             
@@ -603,24 +575,17 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                 element_type = DataType.INTEGER
                 if iterable_type_str != "error":
                     self.analyzer.add_error(line, column, 
-                                          f"No se puede iterar sobre tipo '{iterable_type_str}'")
-            
+                                        f"No se puede iterar sobre tipo '{iterable_type_str}'")
             
             self.analyzer.symbol_table.declare_variable(
                 iter_var, element_type, line, column, False, "auto_generated"
             )            
             
-            
             if ctx.block():
-                
                 self.reset_reachability_in_scope()
-                
-                if ctx.block().statement():
-                    for stmt in ctx.block().statement():
-                        self.safe_visit(stmt)
+                self.safe_visit(ctx.block())  
         
         finally:
-            
             self.pop_reachability_state()
             self.analyzer.loop_depth -= 1
             self.analyzer.symbol_table.exit_scope()
@@ -675,52 +640,47 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
     def visitSwitchStatement(self, ctx: CompiscriptParser.SwitchStatementContext):
         line = ctx.start.line
         
-        
         if self.check_dead_code(ctx, "switch"):
             return None
         
+        self.analyzer.switch_depth += 1
         
-        if ctx.expression():
-            switch_type = self.safe_visit(ctx.expression())
-        
-        
-        current_unreachable = self.analyzer.unreachable_code
-        has_default = ctx.defaultCase() is not None
-        all_cases_unreachable = True
-        
-        
-        if ctx.switchCase():
-            for case in ctx.switchCase():
-                
+        try:
+            if ctx.expression():
+                switch_type = self.safe_visit(ctx.expression())
+            
+            current_unreachable = self.analyzer.unreachable_code
+            has_default = ctx.defaultCase() is not None
+            all_cases_unreachable = True
+            
+            if ctx.switchCase():
+                for case in ctx.switchCase():
+                    self.analyzer.unreachable_code = current_unreachable
+                    self.push_reachability_state()
+                    self.safe_visit(case)
+                    case_unreachable = self.analyzer.unreachable_code
+                    self.pop_reachability_state()
+                    
+                    if not case_unreachable:
+                        all_cases_unreachable = False
+            
+            if ctx.defaultCase():
                 self.analyzer.unreachable_code = current_unreachable
                 self.push_reachability_state()
-                self.safe_visit(case)
-                case_unreachable = self.analyzer.unreachable_code
+                self.safe_visit(ctx.defaultCase())
+                default_unreachable = self.analyzer.unreachable_code
                 self.pop_reachability_state()
                 
-                
-                if not case_unreachable:
+                if not default_unreachable:
                     all_cases_unreachable = False
-        
-        
-        if ctx.defaultCase():
-            self.analyzer.unreachable_code = current_unreachable
-            self.push_reachability_state()
-            self.safe_visit(ctx.defaultCase())
-            default_unreachable = self.analyzer.unreachable_code
-            self.pop_reachability_state()
             
-            if not default_unreachable:
-                all_cases_unreachable = False
+            if all_cases_unreachable and has_default:
+                self.analyzer.unreachable_code = True
+            else:
+                self.analyzer.unreachable_code = current_unreachable
         
-        
-        
-        
-        
-        if all_cases_unreachable and has_default:
-            self.analyzer.unreachable_code = True
-        else:
-            self.analyzer.unreachable_code = current_unreachable
+        finally:
+            self.analyzer.switch_depth -= 1
         
         return None
     
@@ -762,14 +722,13 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         line = ctx.start.line
         column = ctx.start.column
         
-        
         self.check_dead_code(ctx, "break")
         
-        if self.analyzer.loop_depth == 0:
+        if self.analyzer.loop_depth == 0 and self.analyzer.switch_depth == 0:
             self.analyzer.add_error(line, column, 
-                "'break' solo puede usarse dentro de bucles")
+                "'break' solo puede usarse dentro de bucles o switch statements")
         
-        self.mark_unreachable()  
+        self.mark_unreachable()
         return None
     
     def visitContinueStatement(self, ctx: CompiscriptParser.ContinueStatementContext):
