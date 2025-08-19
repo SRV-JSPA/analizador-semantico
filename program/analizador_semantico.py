@@ -65,7 +65,6 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         self.analyzer = SemanticAnalyzer()
         
     def check_dead_code(self, ctx, statement_type="declaración"):
-        """Verifica si el código actual es inalcanzable y reporta error si es así"""
         if self.analyzer.unreachable_code:
             self.analyzer.add_error(
                 ctx.start.line, ctx.start.column,
@@ -77,22 +76,18 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
     
     
     def mark_unreachable(self):
-        """Marca el código siguiente como inalcanzable"""
         self.analyzer.unreachable_code = True
     
     def push_reachability_state(self):
-        """Guarda el estado actual de alcanzabilidad al entrar a un nuevo scope"""
         self.analyzer.unreachable_stack.append(self.analyzer.unreachable_code)
     
     def pop_reachability_state(self):
-        """Restaura el estado de alcanzabilidad al salir de un scope"""
         if self.analyzer.unreachable_stack:
             self.analyzer.unreachable_code = self.analyzer.unreachable_stack.pop()
         else:
             self.analyzer.unreachable_code = False
     
     def reset_reachability_in_scope(self):
-        """Resetea la alcanzabilidad dentro del scope actual (para nuevos bloques)"""
         self.analyzer.unreachable_code = False
 
     
