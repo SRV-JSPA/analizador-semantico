@@ -83,6 +83,35 @@ class Scope:
         return self.symbols.copy()
 
 class CompiscriptSymbolTable:
+
+    def _print_class_summary(self, class_symbol: Symbol):
+        print(f"    Resumen de clase: {class_symbol.name}")
+        if class_symbol.parent_class:
+            print(f"    Hereda de: {class_symbol.parent_class}")
+
+        if class_symbol.attributes:
+            print("    Atributos:")
+            for attr_name, attr_sym in class_symbol.attributes.items():
+                if attr_sym.data_type == DataType.ARRAY and attr_sym.array_element_type:
+                    t = f"{attr_sym.array_element_type.value}[]"
+                elif attr_sym.data_type == DataType.CLASS_TYPE:
+                    t = attr_sym.class_type or attr_sym.value or "class"
+                else:
+                    t = attr_sym.data_type.value
+                print(f"      - {attr_name}: {t} (línea {attr_sym.line_number})")
+        else:
+            print("    Atributos: (ninguno)")
+
+        if class_symbol.methods:
+            print("    Métodos:")
+            for m_name, m_sym in class_symbol.methods.items():
+                params = ", ".join(f"{p.name}:{p.data_type.value}" for p in m_sym.parameters)
+                ctor = " [CONSTRUCTOR]" if m_sym.is_constructor else ""
+                ret = m_sym.return_type.value if m_sym.return_type else "void"
+                print(f"      - {m_name}({params}) -> {ret}{ctor} (línea {m_sym.line_number})")
+        else:
+            print("    Métodos: (ninguno)")
+
     
     def __init__(self):
         self.current_scope_level = 0

@@ -69,8 +69,8 @@ def main():
         
         result = semantic_visitor.get_analysis_result()
         
-        #print("Tabla de símbolos")
-        #semantic_visitor.analyzer.symbol_table.print_table()
+        print("Tabla de símbolos")
+        semantic_visitor.analyzer.symbol_table.print_table()
         
         print("Estadísticas")
         

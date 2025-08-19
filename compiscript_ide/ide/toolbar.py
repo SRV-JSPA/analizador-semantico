@@ -16,7 +16,6 @@ class Toolbar(tk.Frame):
         tk.Button(self, text="Configurar Analizador", command=self.configurar_analizador).pack(side=tk.LEFT, padx=5)
 
     def configurar_analizador(self):
-        """Permite al usuario seleccionar la carpeta del analizador semántico"""
         folder = filedialog.askdirectory(
             title="Selecciona la carpeta del Analizador Semántico",
             initialdir=os.getcwd()
@@ -33,7 +32,6 @@ class Toolbar(tk.Frame):
                                    f"No se encontró main.py en:\n{folder}")
 
     def _find_analyzer_automatically(self) -> Path:
-        """Busca automáticamente el analizador semántico en ubicaciones comunes"""
         possible_locations = [
             
             Path.cwd(),
@@ -61,7 +59,6 @@ class Toolbar(tk.Frame):
         return None
 
     def _get_analyzer_dir(self) -> Path:
-        """Obtiene el directorio del analizador semántico"""
         
         if self.analyzer_path and self.analyzer_path.exists():
             return self.analyzer_path
@@ -90,73 +87,82 @@ class Toolbar(tk.Frame):
             messagebox.showerror("Error", f"No se pudo guardar el archivo:\n{str(e)}")
 
     def compilar(self):
-        
         analyzer_dir = self._get_analyzer_dir()
         main_py = analyzer_dir / "main.py"
-        
-        
+
         if not main_py.exists():
             self.app.console.log(f"No se encontró el analizador en: {analyzer_dir}")
             response = messagebox.askyesno(
-                "Analizador no encontrado", 
+                "Analizador no encontrado",
                 f"No se encontró main.py del analizador semántico en:\n{main_py}\n\n"
                 "¿Deseas configurar manualmente la ubicación del analizador?"
             )
             if response:
                 self.configurar_analizador()
-                return
-            else:
-                return
-
-        
-        current_path = self.app.get_current_path()
-        
-        if not current_path:
-            messagebox.showwarning("Sin archivo", 
-                                 "No hay ningún archivo abierto. Abre un archivo .cps primero.")
             return
-            
+
+        current_path = self.app.get_current_path()
+        if not current_path:
+            messagebox.showwarning("Sin archivo", "No hay ningún archivo abierto. Abre un archivo .cps primero.")
+            return
         if not current_path.endswith(".cps"):
-            messagebox.showwarning("Archivo inválido", 
-                                 "El archivo actual no es un archivo .cps. Selecciona un archivo .cps.")
+            messagebox.showwarning("Archivo inválido", "El archivo actual no es un archivo .cps. Selecciona un archivo .cps.")
             return
 
         cps_file = Path(current_path)
-        
-        
         if not cps_file.exists():
             messagebox.showerror("Archivo no encontrado", f"No existe el archivo .cps:\n{cps_file}")
             return
 
-        
         self.guardar()
 
-        
         command = [sys.executable, str(main_py), str(cps_file.resolve())]
 
         try:
             self.app.console.log(f"Archivo: {cps_file.name}")
             self.app.console.log(f"Analizador: {analyzer_dir}")
-            
-            
+
             result = subprocess.run(
                 command,
                 capture_output=True,
                 text=True,
-                cwd=str(analyzer_dir),  
-                timeout=30  
+                cwd=str(analyzer_dir),
+                timeout=30
             )
 
             if result.stdout.strip():
                 for line in result.stdout.strip().split('\n'):
                     self.app.console.log(line)
-            
             if result.stderr.strip():
                 for line in result.stderr.strip().split('\n'):
                     self.app.console.log(line)
-            
-            
-                
+
+            try:
+                if str(analyzer_dir) not in sys.path:
+                    sys.path.insert(0, str(analyzer_dir))
+
+                from analizador_semantico import CompiscriptSemanticVisitor
+                from antlr4 import FileStream, CommonTokenStream, InputStream
+                from CompiscriptLexer import CompiscriptLexer
+                from CompiscriptParser import CompiscriptParser
+
+                input_stream = FileStream(str(cps_file.resolve()), encoding="utf-8")
+                lexer = CompiscriptLexer(input_stream)
+                tokens = CommonTokenStream(lexer)
+                parser = CompiscriptParser(tokens)
+                ast = parser.program()
+
+                visitor = CompiscriptSemanticVisitor()
+                visitor.visit(ast)
+                result_analysis = visitor.get_analysis_result()
+                symbol_table = result_analysis["symbol_table"]
+
+                self.app.syntax_tree_view.load_from_ast(ast)
+                self.app.symbol_table_view.load_from_symbol_table(symbol_table)
+            except Exception as e:
+                self.app.console.log(f"Error cargando vistas: {str(e)}")
+
         except Exception as e:
             self.app.console.log(f"Error al ejecutar el analizador: {str(e)}")
             messagebox.showerror("Error de ejecución", f"Error al ejecutar el analizador:\n{str(e)}")
+
