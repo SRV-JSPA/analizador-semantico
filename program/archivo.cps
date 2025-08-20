@@ -81,3 +81,8 @@ prom = juan.promedioNotas(90, 85, 95);
 log = log + "Promedio (entero): " + toString(prom) + "\n";
 
 // Nota: 'log' contiene todas las salidas.
+
+
+
+
+
