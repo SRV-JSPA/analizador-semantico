@@ -256,11 +256,10 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
     
     
     def visitVariableDeclaration(self, ctx: CompiscriptParser.VariableDeclarationContext):
-        
+            
         if self.check_dead_code(ctx, "declaración de variable"):
             return None
             
-        
         var_name = ctx.Identifier().getText()
         line = ctx.start.line
         column = ctx.start.column
@@ -326,8 +325,19 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         
         if not success:
             return None
+
+        if ctx.initializer():
+            init_text = ctx.initializer().expression().getText().strip()
+            while init_text.startswith('(') and init_text.endswith(')'):
+                init_text = init_text[1:-1].strip()
+            if init_text == "0":
+                sym = self.analyzer.symbol_table.lookup_current_scope(var_name)
+                if sym:
+                    sym.value = 0
+                    sym.is_initialized = True
         
         return declared_type
+
     
     def is_class_type(self, type_name: str) -> bool:
         
@@ -1196,14 +1206,25 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         return left_type
     
     def visitMultiplicativeExpr(self, ctx: CompiscriptParser.MultiplicativeExprContext):
-        
         left_type = self.safe_visit(ctx.unaryExpr(0))
-        
         if ctx.unaryExpr() and len(ctx.unaryExpr()) > 1:
             for i in range(1, len(ctx.unaryExpr())):
-                right_type = self.safe_visit(ctx.unaryExpr(i))
-                operator = ctx.getChild(2*i - 1).getText() 
-                
+                right_expr = ctx.unaryExpr(i)
+                right_type = self.safe_visit(right_expr)
+                operator = ctx.getChild(2*i - 1).getText()
+                if operator in ["/", "%"]:
+                    txt = right_expr.getText().strip()
+                    while txt.startswith('(') and txt.endswith(')'):
+                        txt = txt[1:-1].strip()
+                    is_zero_literal = (txt == "0")
+                    is_zero_identifier = False
+                    if not is_zero_literal and txt.isidentifier():
+                        sym = self.analyzer.symbol_table.lookup(txt)
+                        if sym and getattr(sym, "value", None) == 0:
+                            is_zero_identifier = True
+                    if is_zero_literal or is_zero_identifier:
+                        self.analyzer.add_error(ctx.start.line, ctx.start.column, "No se puede dividir entre 0")
+                        return "error"
                 result_type = self.analyzer.type_checker.check_binary_operation(
                     left_type, operator, right_type
                 )
@@ -1213,8 +1234,9 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                         f"Operación inválida: '{left_type}' {operator} '{right_type}'"
                     )
                 left_type = result_type
-        
         return left_type
+
+
     
     def visitUnaryExpr(self, ctx: CompiscriptParser.UnaryExprContext):
         
