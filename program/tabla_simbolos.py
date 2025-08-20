@@ -239,21 +239,31 @@ class CompiscriptSymbolTable:
         return self.insert(instance_symbol)
     
     def lookup_class_member(self, class_name: str, member_name: str, member_type: str = "any") -> Optional[Symbol]:
-        
-        class_symbol = self.lookup(class_name)
-        if not class_symbol or class_symbol.symbol_type != SymbolType.CLASS:
+        def search_member_in_hierarchy(current_class_name: str, visited: set = None):
+            if visited is None:
+                visited = set()
+            
+            if current_class_name in visited:
+                return None
+            
+            visited.add(current_class_name)
+            
+            class_symbol = self.lookup(current_class_name)
+            if not class_symbol or class_symbol.symbol_type != SymbolType.CLASS:
+                return None
+            
+            if member_type in ["method", "any"] and member_name in class_symbol.methods:
+                return class_symbol.methods[member_name]
+            
+            if member_type in ["attribute", "any"] and member_name in class_symbol.attributes:
+                return class_symbol.attributes[member_name]
+            
+            if class_symbol.parent_class:
+                return search_member_in_hierarchy(class_symbol.parent_class, visited)
+            
             return None
         
-        if member_type in ["method", "any"] and member_name in class_symbol.methods:
-            return class_symbol.methods[member_name]
-        
-        if member_type in ["attribute", "any"] and member_name in class_symbol.attributes:
-            return class_symbol.attributes[member_name]
-        
-        if class_symbol.parent_class:
-            return self.lookup_class_member(class_symbol.parent_class, member_name, member_type)
-        
-        return None
+        return search_member_in_hierarchy(class_name)
     
     def validate_class_access(self, object_var: str, member_name: str) -> tuple[bool, str, Optional[Symbol]]:
         

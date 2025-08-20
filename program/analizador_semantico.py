@@ -141,7 +141,6 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         line = ctx.start.line
         column = ctx.start.column
 
-        
         array_element_type = None
         if ctx.type_():
             return_type_str = self.safe_visit(ctx.type_())
@@ -164,7 +163,6 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         else:
             return_type = DataType.VOID
 
-        
         parameters = []
         param_array_info = {}  
         
@@ -176,13 +174,11 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                 if param.type_():
                     param_type_str = self.safe_visit(param.type_())
                     
-                    
                     if param_type_str and param_type_str.endswith("[]"):
                         base_type = param_type_str[:-2]
                         try:
                             param_array_element_type = DataType(base_type)
                             param_type = DataType.ARRAY
-                            
                             param_array_info[param_name] = param_array_element_type
                         except ValueError:
                             self.analyzer.add_error(param.start.line, param.start.column,
@@ -200,14 +196,12 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                 
                 parameters.append((param_name, param_type))
 
-        
         success = self.analyzer.symbol_table.declare_function(
             func_name, return_type, parameters, line, column, array_element_type)
-        
+                
         if not success:
             return None
 
-        
         prev_context = (self.analyzer.current_function, self.analyzer.return_found)
         self.analyzer.function_ctx_stack.append(prev_context)
 
@@ -218,21 +212,17 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         self.push_reachability_state()
         self.reset_reachability_in_scope()
 
-        
         for param_name, param_type in parameters:
-            
             param_array_element_type = param_array_info.get(param_name, None)
             
             self.analyzer.symbol_table.declare_variable(
                 param_name, param_type, line, column, False, None, param_array_element_type
             )
 
-        
         if ctx.block() and ctx.block().statement():
             for stmt in ctx.block().statement():
                 self.safe_visit(stmt)
 
-        
         if return_type != DataType.VOID and not self.analyzer.return_found:
             self.analyzer.add_error(
                 line, column,
@@ -243,10 +233,7 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         self.analyzer.symbol_table.exit_scope()
         
         self.pop_reachability_state()
-        
-        self.analyzer.symbol_table.exit_scope()
 
-        
         if self.analyzer.function_ctx_stack:
             prev_func, prev_return_found = self.analyzer.function_ctx_stack.pop()
             self.analyzer.current_function = prev_func
@@ -948,14 +935,12 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         line = ctx.start.line
         column = ctx.start.column
         
-        
         if self.check_dead_code(ctx, "asignación"):
             return None
         
         try:
             expressions = ctx.expression()
             identifier_node = ctx.Identifier()
-            
             
             if identifier_node is not None and len(expressions) == 1:
                 var_name = identifier_node.getText()
@@ -988,34 +973,24 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                 value_type = self.safe_visit(expressions[1])
                                 
                 if self.is_class_type(obj_type):
-                    class_symbol = self.analyzer.symbol_table.lookup(obj_type)
-                    if class_symbol and class_symbol.symbol_type == SymbolType.CLASS:
-                        if property_name in class_symbol.attributes:
-                            attr_symbol = class_symbol.attributes[property_name]
-                            
-                            if attr_symbol.symbol_type == SymbolType.CONSTANT:
-                                self.analyzer.add_error(line, column,
-                                    f"No se puede reasignar la constante '{property_name}'")
-                                return None
-                            
-                            expected_type = attr_symbol.data_type.value
-                            if attr_symbol.data_type == DataType.CLASS_TYPE:
-                                expected_type = attr_symbol.class_type or attr_symbol.value
-                            elif attr_symbol.data_type == DataType.ARRAY and attr_symbol.array_element_type:
-                                expected_type = f"{attr_symbol.array_element_type.value}[]"
-                            
-                            if not self.analyzer.type_checker.is_compatible(expected_type, value_type):
-                                self.analyzer.add_error(line, column,
-                                    f"Tipo incompatible: no se puede asignar '{value_type}' a '{property_name}' de tipo '{expected_type}'")
-                            else:
-                                print(f"Asignación válida: {property_name} = {value_type}")
+                    result_tuple = self.handle_class_property_access(
+                        obj_type, property_name, line, column, is_this=False)
+                    
+                    if result_tuple[0] != "error":
+                        attr_symbol = result_tuple[1]
                         
-                        else:
+                        if attr_symbol and attr_symbol.symbol_type == SymbolType.CONSTANT:
                             self.analyzer.add_error(line, column,
-                                f"La clase '{obj_type}' no tiene un atributo '{property_name}'")
-                    else:
-                        self.analyzer.add_error(line, column,
-                            f"'{obj_type}' no es una clase válida")
+                                f"No se puede reasignar la constante '{property_name}'")
+                            return None
+                        
+                        expected_type = result_tuple[0]
+                        
+                        if not self.analyzer.type_checker.is_compatible(expected_type, value_type):
+                            self.analyzer.add_error(line, column,
+                                f"Tipo incompatible: no se puede asignar '{value_type}' a '{property_name}' de tipo '{expected_type}'")
+                        else:
+                            print(f"Asignación válida: {property_name} = {value_type}")
                 else:
                     self.analyzer.add_error(line, column,
                         f"No se puede acceder a propiedades del tipo '{obj_type}'")
@@ -1450,42 +1425,121 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         return current_result
 
     def handle_class_property_access(self, class_name: str, property_name: str, 
-                        line: int, column: int, is_this: bool = False):
+                line: int, column: int, is_this: bool = False):
+        def search_in_class_hierarchy(current_class_name: str, property_name: str, visited_classes: set = None):
+            if visited_classes is None:
+                visited_classes = set()
+            
+            if current_class_name in visited_classes:
+                return None, None
+            
+            visited_classes.add(current_class_name)
+            
+            class_symbol = self.analyzer.symbol_table.lookup(current_class_name)
+            if not class_symbol or class_symbol.symbol_type != SymbolType.CLASS:
+                return None, None
+            
+            if property_name in class_symbol.attributes:
+                attr_symbol = class_symbol.attributes[property_name]
+                attr_symbol.is_used = True
+                
+                if attr_symbol.data_type == DataType.ARRAY and attr_symbol.array_element_type:
+                    return f"{attr_symbol.array_element_type.value}[]", attr_symbol
+                elif attr_symbol.data_type == DataType.CLASS_TYPE:
+                    return attr_symbol.class_type or attr_symbol.value, attr_symbol
+                else:
+                    return attr_symbol.data_type.value, attr_symbol
+            
+            if property_name in class_symbol.methods:
+                method_symbol = class_symbol.methods[property_name]
+                method_symbol.is_used = True
+                return "method", method_symbol
+            
+            if class_symbol.parent_class:
+                return search_in_class_hierarchy(class_symbol.parent_class, property_name, visited_classes)
+            
+            return None, None
         
-        
-        class_symbol = self.analyzer.symbol_table.lookup(class_name)
-        if not class_symbol or class_symbol.symbol_type != SymbolType.CLASS:
+        initial_class_symbol = self.analyzer.symbol_table.lookup(class_name)
+        if not initial_class_symbol or initial_class_symbol.symbol_type != SymbolType.CLASS:
             self.analyzer.add_error(line, column,
                 f"Clase '{class_name}' no encontrada")
             return "error", None
         
+        result_type, result_symbol = search_in_class_hierarchy(class_name, property_name)
         
-        if property_name in class_symbol.attributes:
-            attr_symbol = class_symbol.attributes[property_name]
-            attr_symbol.is_used = True  
-            
-            
-            if attr_symbol.data_type == DataType.ARRAY and attr_symbol.array_element_type:
-                return f"{attr_symbol.array_element_type.value}[]", attr_symbol
-            elif attr_symbol.data_type == DataType.CLASS_TYPE:
-                
-                return attr_symbol.class_type or attr_symbol.value, attr_symbol
-            else:
-                return attr_symbol.data_type.value, attr_symbol
-        
-        
-        elif property_name in class_symbol.methods:
-            method_symbol = class_symbol.methods[property_name]
-            method_symbol.is_used = True  
-            
-            
-            
-            return "method", method_symbol
-        
+        if result_type is not None and result_symbol is not None:
+            return result_type, result_symbol
         else:
+            hierarchy = []
+            current_class = class_name
+            while current_class:
+                hierarchy.append(current_class)
+                class_sym = self.analyzer.symbol_table.lookup(current_class)
+                if class_sym and class_sym.parent_class:
+                    current_class = class_sym.parent_class
+                else:
+                    break
+            
+            hierarchy_str = " -> ".join(hierarchy)
             self.analyzer.add_error(line, column,
-                f"La clase '{class_name}' no tiene un atributo o método llamado '{property_name}'")
+                f"La clase '{class_name}' (jerarquía: {hierarchy_str}) no tiene un atributo o método llamado '{property_name}'")
             return "error", None
+
+    def lookup_class_member(self, class_name: str, member_name: str, member_type: str = "any") -> Optional[Symbol]:
+        def search_member_in_hierarchy(current_class_name: str, visited: set = None):
+            if visited is None:
+                visited = set()
+            
+            if current_class_name in visited:
+                return None
+            
+            visited.add(current_class_name)
+            
+            class_symbol = self.lookup(current_class_name)
+            if not class_symbol or class_symbol.symbol_type != SymbolType.CLASS:
+                return None
+            
+            if member_type in ["method", "any"] and member_name in class_symbol.methods:
+                return class_symbol.methods[member_name]
+            
+            if member_type in ["attribute", "any"] and member_name in class_symbol.attributes:
+                return class_symbol.attributes[member_name]
+            
+            if class_symbol.parent_class:
+                return search_member_in_hierarchy(class_symbol.parent_class, visited)
+            
+            return None
+        
+        return search_member_in_hierarchy(class_name)
+    
+    def validate_class_access(self, object_var: str, member_name: str) -> tuple[bool, str, Optional[Symbol]]:
+        var_symbol = self.lookup(object_var)
+        if not var_symbol:
+            return False, "error", None
+        
+        if var_symbol.data_type != DataType.CLASS_TYPE:
+            return False, "error", None
+        
+        class_name = var_symbol.class_type or var_symbol.value
+        if not class_name:
+            return False, "error", None
+        
+        member_symbol = self.lookup_class_member(class_name, member_name)
+        if not member_symbol:
+            return False, "error", None
+        
+        if member_symbol.symbol_type == SymbolType.METHOD:
+            return True, "method", member_symbol
+        elif member_symbol.symbol_type in [SymbolType.ATTRIBUTE, SymbolType.VARIABLE]:
+            if member_symbol.data_type == DataType.ARRAY and member_symbol.array_element_type:
+                return True, f"{member_symbol.array_element_type.value}[]", member_symbol
+            elif member_symbol.data_type == DataType.CLASS_TYPE:
+                return True, member_symbol.class_type or member_symbol.value, member_symbol
+            else:
+                return True, member_symbol.data_type.value, member_symbol
+        else:
+            return False, "error", None
 
     
     def visitPrimaryAtom(self, ctx: CompiscriptParser.PrimaryAtomContext):
@@ -1536,29 +1590,45 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         return symbol.data_type.value
     
     def visitNewExpr(self, ctx: CompiscriptParser.NewExprContext):
-        
         try:
             class_name = ctx.Identifier().getText()
             line = ctx.start.line
             column = ctx.start.column
                         
-            
             class_symbol = self.analyzer.symbol_table.lookup(class_name)
             if not class_symbol or class_symbol.symbol_type != SymbolType.CLASS:
                 self.analyzer.add_error(line, column, f"Clase '{class_name}' no está declarada")
                 return "error"
             
+            def find_constructor_in_hierarchy(current_class: str, visited: set = None):
+                if visited is None:
+                    visited = set()
+                
+                if current_class in visited:
+                    return None
+                
+                visited.add(current_class)
+                
+                current_symbol = self.analyzer.symbol_table.lookup(current_class)
+                if not current_symbol or current_symbol.symbol_type != SymbolType.CLASS:
+                    return None
+                
+                if "constructor" in current_symbol.methods:
+                    return current_symbol.methods["constructor"]
+                
+                if current_symbol.parent_class:
+                    return find_constructor_in_hierarchy(current_symbol.parent_class, visited)
+                
+                return None
             
-            if "constructor" in class_symbol.methods:
-                constructor = class_symbol.methods["constructor"]
-                
-                
+            constructor = find_constructor_in_hierarchy(class_name)
+            
+            if constructor:
                 if ctx.arguments():
                     arg_types = []
                     for expr in ctx.arguments().expression():
                         arg_type = self.safe_visit(expr)
                         arg_types.append(arg_type)
-                    
                     
                     expected_params = len(constructor.parameters)
                     actual_args = len(arg_types)
@@ -1568,21 +1638,16 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                             f"Constructor de '{class_name}' espera {expected_params} argumentos, pero recibió {actual_args}")
                         return "error"
                     
-                    
                     for i, (expected_param, actual_arg) in enumerate(zip(constructor.parameters, arg_types)):
                         if not self.analyzer.type_checker.is_compatible(expected_param.data_type.value, actual_arg):
                             self.analyzer.add_error(line, column,
                                 f"Argumento {i+1} del constructor: esperado '{expected_param.data_type.value}', encontrado '{actual_arg}'")
                             return "error"
-            
             else:
-                
                 if ctx.arguments() and ctx.arguments().expression():
                     self.analyzer.add_error(line, column,
                         f"Clase '{class_name}' no tiene constructor, pero se proporcionaron argumentos")
                     return "error"
-            
-            
             
             return class_name
             
@@ -1603,7 +1668,26 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         return self.analyzer.current_class
     
     def validate_method_call(self, object_type: str, method_name: str, arguments_ctx, line: int, column: int) -> str:
-        
+        def find_method_in_hierarchy(class_name: str, method_name: str, visited: set = None):
+            if visited is None:
+                visited = set()
+            
+            if class_name in visited:
+                return None
+            
+            visited.add(class_name)
+            
+            class_symbol = self.analyzer.symbol_table.lookup(class_name)
+            if not class_symbol or class_symbol.symbol_type != SymbolType.CLASS:
+                return None
+            
+            if method_name in class_symbol.methods:
+                return class_symbol.methods[method_name]
+            
+            if class_symbol.parent_class:
+                return find_method_in_hierarchy(class_symbol.parent_class, method_name, visited)
+            
+            return None
         
         class_symbol = self.analyzer.symbol_table.lookup(object_type)
         if not class_symbol or class_symbol.symbol_type != SymbolType.CLASS:
@@ -1611,14 +1695,11 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                 f"'{object_type}' no es una clase válida")
             return "error"
         
-        
-        if method_name not in class_symbol.methods:
+        method_symbol = find_method_in_hierarchy(object_type, method_name)
+        if not method_symbol:
             self.analyzer.add_error(line, column,
                 f"La clase '{object_type}' no tiene un método llamado '{method_name}'")
             return "error"
-        
-        method_symbol = class_symbol.methods[method_name]
-        
         
         expected_params = method_symbol.parameters
         expected_count = len(expected_params)
@@ -1632,12 +1713,10 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
                 arg_type = self.safe_visit(expr)
                 actual_args.append(arg_type)
         
-        
         if actual_count != expected_count:
             self.analyzer.add_error(line, column,
                 f"Método '{method_name}' espera {expected_count} argumentos pero recibió {actual_count}")
             return "error"
-        
         
         for i in range(actual_count):
             expected_param = expected_params[i]
