@@ -141,10 +141,10 @@ class Toolbar(tk.Frame):
                 if str(analyzer_dir) not in sys.path:
                     sys.path.insert(0, str(analyzer_dir))
 
-                from analizador_semantico import CompiscriptSemanticVisitor
+                from program.analizador_semantico import CompiscriptSemanticVisitor
                 from antlr4 import FileStream, CommonTokenStream, InputStream
-                from CompiscriptLexer import CompiscriptLexer
-                from CompiscriptParser import CompiscriptParser
+                from program.CompiscriptLexer import CompiscriptLexer
+                from program.CompiscriptParser import CompiscriptParser
 
                 input_stream = FileStream(str(cps_file.resolve()), encoding="utf-8")
                 lexer = CompiscriptLexer(input_stream)
