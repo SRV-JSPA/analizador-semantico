@@ -1535,35 +1535,6 @@ class CompiscriptSemanticVisitor(CompiscriptVisitor):
         
         return search_member_in_hierarchy(class_name)
     
-    def validate_class_access(self, object_var: str, member_name: str) -> tuple[bool, str, Optional[Symbol]]:
-        var_symbol = self.lookup(object_var)
-        if not var_symbol:
-            return False, "error", None
-        
-        if var_symbol.data_type != DataType.CLASS_TYPE:
-            return False, "error", None
-        
-        class_name = var_symbol.class_type or var_symbol.value
-        if not class_name:
-            return False, "error", None
-        
-        member_symbol = self.lookup_class_member(class_name, member_name)
-        if not member_symbol:
-            return False, "error", None
-        
-        if member_symbol.symbol_type == SymbolType.METHOD:
-            return True, "method", member_symbol
-        elif member_symbol.symbol_type in [SymbolType.ATTRIBUTE, SymbolType.VARIABLE]:
-            if member_symbol.data_type == DataType.ARRAY and member_symbol.array_element_type:
-                return True, f"{member_symbol.array_element_type.value}[]", member_symbol
-            elif member_symbol.data_type == DataType.CLASS_TYPE:
-                return True, member_symbol.class_type or member_symbol.value, member_symbol
-            else:
-                return True, member_symbol.data_type.value, member_symbol
-        else:
-            return False, "error", None
-
-    
     def visitPrimaryAtom(self, ctx: CompiscriptParser.PrimaryAtomContext):
         
         return self.visitChildren(ctx)
