@@ -28,3 +28,6 @@ El compilador revisa que los programas no solo estén bien escritos de forma sin
 2. Ejecutar el compilador desde terminal:  
    ```bash
    python main.py archivo.cps
+
+## Video en Youtube
+[Aquí](https://youtu.be/YUMDiK8-0rA)
